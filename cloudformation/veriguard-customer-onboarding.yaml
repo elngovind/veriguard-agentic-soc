@@ -191,15 +191,17 @@ Resources:
         - Key: Customer
           Value: !Ref CustomerName
 
-  # Application has no Name/AgentSpaceId property in the real schema — it's the
-  # vehicle for granting WebApp users API access via RoleArn (the Application Role).
-  CustomerApplication:
-    Type: AWS::SecurityAgent::Application
-    Properties:
-      RoleArn: !GetAtt ApplicationRole.Arn
-      Tags:
-        - Key: Customer
-          Value: !Ref CustomerName
+  # NOTE: AWS::SecurityAgent::Application is intentionally NOT created here.
+  # It is an account-wide singleton — AWS allows only one Application per AWS
+  # account, full stop (confirmed via deploy error: "Application already
+  # exists for account ... Only one application per account is allowed.").
+  # It isn't a per-customer resource at all: AgentSpace and Pentest don't
+  # reference an ApplicationId, so nothing downstream in this template needs
+  # it. AWS auto-provisions the account's one Application when Security Agent
+  # is first activated. ApplicationRole (below) is still created so you can
+  # point the account's existing Application at it if you want WebApp users to
+  # assume it — see README "Application singleton" section for the one-time,
+  # account-level `update-application` command.
 
   # Pentest requires AgentSpaceId, ServiceRole, and Assets. The Actor Role is
   # attached per-actor inside Assets.Actors[].Authentication (ProviderType
@@ -225,8 +227,6 @@ Resources:
 Outputs:
   AgentSpaceId:
     Value: !Ref CustomerAgentSpace
-  ApplicationId:
-    Value: !Ref CustomerApplication
   TargetDomainId:
     Value: !Ref CustomerTargetDomain
   PentestId:

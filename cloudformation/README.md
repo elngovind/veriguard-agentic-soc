@@ -50,6 +50,31 @@ All AWS-managed, pay-per-use, zero idle cost — no EC2, no containers, no VPC, 
   before the pentest can run. This is an AWS console limitation, not a gap in the
   template.
 
+## Application singleton (read before deploying a 2nd onboarding stack in the same account)
+
+`AWS::SecurityAgent::Application` is **one per AWS account, account-wide** — not
+per customer, not per AgentSpace. AWS confirmed this via a real deploy error:
+
+```
+Application already exists for account <id>. Only one application per account
+is allowed. (HandlerErrorCode: AlreadyExists)
+```
+
+AWS auto-provisions that one Application when Security Agent is first activated
+in an account. `veriguard-customer-onboarding.yaml` does **not** create an
+`Application` resource — it only creates `TargetDomain`, `AgentSpace`, `Pentest`,
+and the IAM roles, none of which reference an `ApplicationId`. If you want the
+account's existing Application to use this customer's `ApplicationRole` (e.g. so
+a WebApp user can assume it), do that as a one-time, account-level, manual step:
+
+```bash
+aws securityagent get-application
+aws securityagent update-application --role-arn <ApplicationRoleArn-from-stack-output>
+```
+
+This only needs to happen once per AWS account, regardless of how many
+onboarding stacks (customers) you deploy into it.
+
 ## Deploy: platform stack (once)
 
 ```bash
