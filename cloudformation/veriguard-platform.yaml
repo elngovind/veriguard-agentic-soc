@@ -1,0 +1,755 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Veriguard — central serverless platform (MSSP Console + Comply).
+  DynamoDB + Lambda + API Gateway HTTP API + Step Functions + EventBridge + SQS +
+  S3 Object Lock + Cognito. No servers, no fixed-cost compute, no VPC/NAT/Aurora —
+  pure pay-per-request. Deploy with:
+    aws cloudformation deploy --template-file veriguard-platform.yaml \
+      --stack-name veriguard-platform --capabilities CAPABILITY_NAMED_IAM \
+      --parameter-overrides EnvironmentName=dev
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: dev
+    Description: Short environment tag used in resource names (e.g. dev, staging, prod).
+  EvidenceRetentionYears:
+    Type: Number
+    Default: 1
+    Description: Minimum WORM retention (years) applied to every object written to the evidence bucket.
+
+Resources:
+
+  # ===================================================================
+  # DATA LAYER — DynamoDB (PAY_PER_REQUEST: zero cost at zero traffic)
+  # ===================================================================
+
+  TenantsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub veriguard-tenants-${EnvironmentName}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: tenantId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: tenantId
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  FindingsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub veriguard-findings-${EnvironmentName}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: findingId
+          AttributeType: S
+        - AttributeName: tenantId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: findingId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: TenantIndex
+          KeySchema:
+            - AttributeName: tenantId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  EvidencePackagesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub veriguard-evidence-packages-${EnvironmentName}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: packageId
+          AttributeType: S
+        - AttributeName: tenantId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: packageId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: TenantIndex
+          KeySchema:
+            - AttributeName: tenantId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  DriftEventsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub veriguard-drift-events-${EnvironmentName}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: driftId
+          AttributeType: S
+        - AttributeName: tenantId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: driftId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: TenantIndex
+          KeySchema:
+            - AttributeName: tenantId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  ControlMappingsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub veriguard-control-mappings-${EnvironmentName}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: mappingId
+          AttributeType: S
+        - AttributeName: framework
+          AttributeType: S
+      KeySchema:
+        - AttributeName: mappingId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: FrameworkIndex
+          KeySchema:
+            - AttributeName: framework
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # ===================================================================
+  # EVIDENCE STORE — S3 with Object Lock (compliance mode, immutable)
+  # ===================================================================
+
+  EvidenceBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub veriguard-evidence-${AWS::AccountId}-${EnvironmentName}
+      ObjectLockEnabled: true
+      VersioningConfiguration:
+        Status: Enabled
+      ObjectLockConfiguration:
+        ObjectLockEnabled: Enabled
+        Rule:
+          DefaultRetention:
+            Mode: COMPLIANCE
+            Years: !Ref EvidenceRetentionYears
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # ===================================================================
+  # EVENTING — EventBridge bus + SQS ingestion queue with DLQ
+  # ===================================================================
+
+  VeriguardEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: !Sub veriguard-bus-${EnvironmentName}
+
+  FindingsDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub veriguard-findings-dlq-${EnvironmentName}
+      MessageRetentionPeriod: 1209600
+
+  FindingsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub veriguard-findings-queue-${EnvironmentName}
+      VisibilityTimeout: 60
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt FindingsDLQ.Arn
+        maxReceiveCount: 5
+
+  FindingsQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref FindingsQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt FindingsQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt FindingIngestedRule.Arn
+
+  FindingIngestedRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub veriguard-finding-ingested-${EnvironmentName}
+      EventBusName: !Ref VeriguardEventBus
+      EventPattern:
+        source:
+          - veriguard.ingestion
+        detail-type:
+          - FindingDetected
+      Targets:
+        - Id: FindingsQueueTarget
+          Arn: !GetAtt FindingsQueue.Arn
+
+  # ===================================================================
+  # IAM — shared execution role for application Lambdas
+  # ===================================================================
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub veriguard-lambda-exec-${EnvironmentName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: VeriguardDataAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt TenantsTable.Arn
+                  - !GetAtt FindingsTable.Arn
+                  - !Sub ${FindingsTable.Arn}/index/*
+                  - !GetAtt EvidencePackagesTable.Arn
+                  - !Sub ${EvidencePackagesTable.Arn}/index/*
+                  - !GetAtt DriftEventsTable.Arn
+                  - !Sub ${DriftEventsTable.Arn}/index/*
+                  - !GetAtt ControlMappingsTable.Arn
+                  - !Sub ${ControlMappingsTable.Arn}/index/*
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub ${EvidenceBucket.Arn}/*
+              - Effect: Allow
+                Action: states:StartExecution
+                # Constructed ARN (not !Ref/!GetAtt) to avoid a circular dependency:
+                # this role -> EvidenceFunction -> EvidencePackageStateMachine -> back to this role.
+                Resource: !Sub arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:veriguard-evidence-pipeline-${EnvironmentName}
+
+  StepFunctionsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub veriguard-sfn-exec-${EnvironmentName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeEvidenceGenerator
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt EvidenceGeneratorFunction.Arn
+
+  # ===================================================================
+  # LAMBDA — API handlers (Python 3.12, inline, boto3 only)
+  # ===================================================================
+
+  TenantsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub veriguard-tenants-${EnvironmentName}
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 10
+      Environment:
+        Variables:
+          TENANTS_TABLE: !Ref TenantsTable
+      Code:
+        ZipFile: |
+          import json, os, boto3
+          ddb = boto3.resource('dynamodb')
+          table = ddb.Table(os.environ['TENANTS_TABLE'])
+
+          def resp(code, body):
+              return {'statusCode': code, 'headers': {'Content-Type': 'application/json'},
+                      'body': json.dumps(body, default=str)}
+
+          def handler(event, context):
+              params = event.get('pathParameters') or {}
+              tid = params.get('tenantId')
+              if tid:
+                  item = table.get_item(Key={'tenantId': tid}).get('Item')
+                  return resp(404, {'error': 'not found'}) if not item else resp(200, item)
+              items = table.scan().get('Items', [])
+              return resp(200, {'tenants': items, 'count': len(items)})
+
+  FindingsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub veriguard-findings-${EnvironmentName}
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 10
+      Environment:
+        Variables:
+          FINDINGS_TABLE: !Ref FindingsTable
+      Code:
+        ZipFile: |
+          import json, os, boto3
+          from boto3.dynamodb.conditions import Key
+          ddb = boto3.resource('dynamodb')
+          table = ddb.Table(os.environ['FINDINGS_TABLE'])
+
+          def resp(code, body):
+              return {'statusCode': code, 'headers': {'Content-Type': 'application/json'},
+                      'body': json.dumps(body, default=str)}
+
+          def handler(event, context):
+              qs = event.get('queryStringParameters') or {}
+              tid = qs.get('tenantId')
+              if tid:
+                  items = table.query(IndexName='TenantIndex',
+                                       KeyConditionExpression=Key('tenantId').eq(tid)).get('Items', [])
+              else:
+                  items = table.scan().get('Items', [])
+              return resp(200, {'findings': items, 'count': len(items)})
+
+  EvidenceFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub veriguard-evidence-${EnvironmentName}
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 10
+      Environment:
+        Variables:
+          EVIDENCE_TABLE: !Ref EvidencePackagesTable
+          STATE_MACHINE_ARN: !Ref EvidencePackageStateMachine
+      Code:
+        ZipFile: |
+          import json, os, uuid, datetime, boto3
+          ddb = boto3.resource('dynamodb')
+          table = ddb.Table(os.environ['EVIDENCE_TABLE'])
+          sfn = boto3.client('stepfunctions')
+
+          def resp(code, body):
+              return {'statusCode': code, 'headers': {'Content-Type': 'application/json'},
+                      'body': json.dumps(body, default=str)}
+
+          def handler(event, context):
+              method = event.get('requestContext', {}).get('http', {}).get('method', 'GET')
+              if method == 'POST':
+                  body = json.loads(event.get('body') or '{}')
+                  pkg_id = 'EP-' + uuid.uuid4().hex[:8].upper()
+                  item = {
+                      'packageId': pkg_id, 'tenantId': body.get('tenantId', 'unknown'),
+                      'framework': body.get('framework', 'SOC 2'),
+                      'periodStart': body.get('periodStart', ''), 'periodEnd': body.get('periodEnd', ''),
+                      'status': 'GENERATING',
+                      'requestedAt': datetime.datetime.utcnow().isoformat() + 'Z',
+                  }
+                  table.put_item(Item=item)
+                  sfn.start_execution(stateMachineArn=os.environ['STATE_MACHINE_ARN'],
+                                       input=json.dumps(item))
+                  return resp(202, item)
+              items = table.scan().get('Items', [])
+              return resp(200, {'evidencePackages': items, 'count': len(items)})
+
+  DriftFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub veriguard-drift-${EnvironmentName}
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 10
+      Environment:
+        Variables:
+          DRIFT_TABLE: !Ref DriftEventsTable
+      Code:
+        ZipFile: |
+          import json, os, boto3
+          ddb = boto3.resource('dynamodb')
+          table = ddb.Table(os.environ['DRIFT_TABLE'])
+
+          def handler(event, context):
+              items = table.scan().get('Items', [])
+              return {'statusCode': 200, 'headers': {'Content-Type': 'application/json'},
+                      'body': json.dumps({'driftEvents': items, 'count': len(items)}, default=str)}
+
+  MappingFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub veriguard-mapping-${EnvironmentName}
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 10
+      Environment:
+        Variables:
+          MAPPING_TABLE: !Ref ControlMappingsTable
+      Code:
+        ZipFile: |
+          import json, os, boto3
+          from boto3.dynamodb.conditions import Key
+          ddb = boto3.resource('dynamodb')
+          table = ddb.Table(os.environ['MAPPING_TABLE'])
+
+          def handler(event, context):
+              qs = event.get('queryStringParameters') or {}
+              fw = qs.get('framework')
+              if fw:
+                  items = table.query(IndexName='FrameworkIndex',
+                                       KeyConditionExpression=Key('framework').eq(fw)).get('Items', [])
+              else:
+                  items = table.scan().get('Items', [])
+              return {'statusCode': 200, 'headers': {'Content-Type': 'application/json'},
+                      'body': json.dumps({'mappings': items, 'count': len(items)}, default=str)}
+
+  EvidenceGeneratorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub veriguard-evidence-generator-${EnvironmentName}
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          EVIDENCE_TABLE: !Ref EvidencePackagesTable
+          EVIDENCE_BUCKET: !Ref EvidenceBucket
+      Code:
+        ZipFile: |
+          import json, os, datetime, boto3
+          ddb = boto3.resource('dynamodb')
+          table = ddb.Table(os.environ['EVIDENCE_TABLE'])
+          s3 = boto3.client('s3')
+          bucket = os.environ['EVIDENCE_BUCKET']
+
+          def handler(event, context):
+              pkg_id = event['packageId']
+              key = f"{event.get('tenantId','unknown')}/{pkg_id}.json"
+              body = json.dumps(event, default=str).encode('utf-8')
+              s3.put_object(Bucket=bucket, Key=key, Body=body, ContentType='application/json')
+              table.update_item(
+                  Key={'packageId': pkg_id},
+                  UpdateExpression='SET #s = :locked, s3Key = :key, generatedAt = :ts',
+                  ExpressionAttributeNames={'#s': 'status'},
+                  ExpressionAttributeValues={
+                      ':locked': 'LOCKED', ':key': key,
+                      ':ts': datetime.datetime.utcnow().isoformat() + 'Z'},
+              )
+              return {'packageId': pkg_id, 'status': 'LOCKED', 's3Key': key}
+
+  # ===================================================================
+  # ORCHESTRATION — Step Functions: evidence package generation
+  # ===================================================================
+
+  EvidencePackageStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub veriguard-evidence-pipeline-${EnvironmentName}
+      RoleArn: !GetAtt StepFunctionsExecutionRole.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "Generate and lock an immutable evidence package",
+          "StartAt": "GeneratePackage",
+          "States": {
+            "GeneratePackage": {
+              "Type": "Task",
+              "Resource": "${EvidenceGeneratorFunction.Arn}",
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2.0
+                }
+              ],
+              "End": true
+            }
+          }
+        }
+
+  # ===================================================================
+  # AUTH — Cognito User Pool (JWT issuer for the API)
+  # ===================================================================
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub veriguard-users-${EnvironmentName}
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub veriguard-webapp-${EnvironmentName}
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+      PreventUserExistenceErrors: ENABLED
+
+  # ===================================================================
+  # API — HTTP API (API Gateway v2) with Cognito JWT authorizer
+  # ===================================================================
+
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub veriguard-api-${EnvironmentName}
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: ['*']
+        AllowMethods: ['GET', 'POST', 'OPTIONS']
+        AllowHeaders: ['Authorization', 'Content-Type']
+
+  HttpApiAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref HttpApi
+      AuthorizerType: JWT
+      Name: VeriguardCognitoAuthorizer
+      IdentitySource:
+        - $request.header.Authorization
+      JwtConfiguration:
+        Audience:
+          - !Ref UserPoolClient
+        Issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}
+
+  HttpApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: !Ref EnvironmentName
+      AutoDeploy: true
+
+  TenantsIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt TenantsFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  FindingsIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt FindingsFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  EvidenceIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt EvidenceFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  DriftIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt DriftFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  MappingIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt MappingFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  RouteGetTenants:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /tenants
+      AuthorizationType: JWT
+      AuthorizerId: !Ref HttpApiAuthorizer
+      Target: !Sub integrations/${TenantsIntegration}
+
+  RouteGetTenantById:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /tenants/{tenantId}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref HttpApiAuthorizer
+      Target: !Sub integrations/${TenantsIntegration}
+
+  RouteGetFindings:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /findings
+      AuthorizationType: JWT
+      AuthorizerId: !Ref HttpApiAuthorizer
+      Target: !Sub integrations/${FindingsIntegration}
+
+  RouteGetEvidence:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /evidence
+      AuthorizationType: JWT
+      AuthorizerId: !Ref HttpApiAuthorizer
+      Target: !Sub integrations/${EvidenceIntegration}
+
+  RoutePostEvidence:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /evidence
+      AuthorizationType: JWT
+      AuthorizerId: !Ref HttpApiAuthorizer
+      Target: !Sub integrations/${EvidenceIntegration}
+
+  RouteGetDrift:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /drift
+      AuthorizationType: JWT
+      AuthorizerId: !Ref HttpApiAuthorizer
+      Target: !Sub integrations/${DriftIntegration}
+
+  RouteGetMapping:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /mapping
+      AuthorizationType: JWT
+      AuthorizerId: !Ref HttpApiAuthorizer
+      Target: !Sub integrations/${MappingIntegration}
+
+  PermissionTenants:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref TenantsFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*
+
+  PermissionFindings:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref FindingsFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*
+
+  PermissionEvidence:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref EvidenceFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*
+
+  PermissionDrift:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DriftFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*
+
+  PermissionMapping:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref MappingFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*
+
+Outputs:
+  ApiEndpoint:
+    Description: Base URL of the Veriguard HTTP API
+    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}
+  UserPoolId:
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Value: !Ref UserPoolClient
+  EvidenceBucketName:
+    Value: !Ref EvidenceBucket
+  EventBusName:
+    Value: !Ref VeriguardEventBus
+  FindingsQueueUrl:
+    Value: !Ref FindingsQueue
+  StateMachineArn:
+    Value: !Ref EvidencePackageStateMachine
+  TenantsTableName:
+    Value: !Ref TenantsTable
+  FindingsTableName:
+    Value: !Ref FindingsTable
+  EvidencePackagesTableName:
+    Value: !Ref EvidencePackagesTable
+  DriftEventsTableName:
+    Value: !Ref DriftEventsTable
+  ControlMappingsTableName:
+    Value: !Ref ControlMappingsTable

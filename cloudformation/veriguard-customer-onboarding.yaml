@@ -1,0 +1,248 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Veriguard — per-customer onboarding stack. Deploy this INSIDE each customer's
+  own AWS account (not the Veriguard management account). It creates the three
+  IAM roles AWS Security Agent requires plus the Security Agent resources
+  (AgentSpace, Application, TargetDomain, Pentest) needed to run an authorized
+  pentest against that one customer. Deploy with:
+    aws cloudformation deploy --template-file veriguard-customer-onboarding.yaml \
+      --stack-name veriguard-onboarding-<customer> --capabilities CAPABILITY_NAMED_IAM \
+      --parameter-overrides CustomerName=acme TargetDomainName=app.acme.com \
+        VeriguardManagementAccountId=111111111111 VerificationMethod=DNS_TXT
+
+Parameters:
+  CustomerName:
+    Type: String
+    Description: Short customer identifier, e.g. "acme". Used in resource names.
+    AllowedPattern: '^[a-z0-9-]{2,32}$'
+  TargetDomainName:
+    Type: String
+    Description: Fully-qualified domain of the application to be pentested, e.g. app.acme.com.
+  VeriguardManagementAccountId:
+    Type: String
+    Description: 12-digit AWS account ID of the Veriguard management account that owns AWS Security Agent.
+    AllowedPattern: '^[0-9]{12}$'
+  VerificationMethod:
+    Type: String
+    Default: DNS_TXT
+    AllowedValues: [DNS_TXT, HTTP_ROUTE]
+    Description: How the customer proves ownership of TargetDomainName.
+  ExternalId:
+    Type: String
+    Description: >
+      Shared secret used in the sts:ExternalId condition on the two cross-account
+      roles. Generate a random UUID per customer and keep it in Secrets Manager —
+      do not reuse across customers.
+  TargetArchitecture:
+    Type: String
+    Default: ApiGateway
+    AllowedValues: [ApiGateway, LambdaFunctionUrl, AlbCognito]
+    Description: Shape of the customer's target app, used to scope the Actor Role's permissions.
+
+Conditions:
+  IsApiGateway: !Equals [!Ref TargetArchitecture, ApiGateway]
+  IsLambdaUrl: !Equals [!Ref TargetArchitecture, LambdaFunctionUrl]
+  IsAlbCognito: !Equals [!Ref TargetArchitecture, AlbCognito]
+
+Resources:
+
+  # ===================================================================
+  # IAM ROLE 1 — Application Role
+  # Assumed by the Security Agent service so Veriguard WebApp users get
+  # scoped API access to this customer's Agent Space / pentest data.
+  # ===================================================================
+
+  ApplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub veriguard-${CustomerName}-application-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: securityagent.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ApplicationRolePermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - securityagent:GetApplication
+                  - securityagent:UpdateApplication
+                  - securityagent:CreateOneTimeLoginSession
+                  - securityagent:ListAgentSpaces
+                  - securityagent:BatchGetAgentSpaces
+                  - securityagent:ListPentests
+                  - securityagent:BatchGetPentests
+                  - securityagent:ListFindings
+                  - securityagent:BatchGetFindings
+                Resource: '*'
+
+  # ===================================================================
+  # IAM ROLE 2 — Penetration Test Service Role
+  # Assumed by the Security Agent service to read/assess this customer's
+  # AWS resources during a pentest. Read-only by design.
+  # ===================================================================
+
+  PentestServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub veriguard-${CustomerName}-pentest-service-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: securityagent.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/SecurityAudit
+
+  # ===================================================================
+  # IAM ROLE 3 — Actor Role
+  # Assumed by the Security Agent to authenticate INTO the target app as
+  # a test actor. Permissions are scoped to the chosen target architecture.
+  # ===================================================================
+
+  ActorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub veriguard-${CustomerName}-actor-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: securityagent.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      Policies:
+        - !If
+          - IsApiGateway
+          - PolicyName: ActorRoleApiGateway
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action: execute-api:Invoke
+                  Resource: !Sub arn:aws:execute-api:*:${AWS::AccountId}:*/*/*/*
+          - !If
+            - IsLambdaUrl
+            - PolicyName: ActorRoleLambdaUrl
+              PolicyDocument:
+                Version: '2012-10-17'
+                Statement:
+                  - Effect: Allow
+                    Action:
+                      - lambda:InvokeFunctionUrl
+                      - lambda:InvokeFunction
+                    Resource: !Sub arn:aws:lambda:*:${AWS::AccountId}:function:*
+            - !If
+              - IsAlbCognito
+              - PolicyName: ActorRoleAlbCognito
+                PolicyDocument:
+                  Version: '2012-10-17'
+                  Statement:
+                    - Effect: Allow
+                      Action:
+                        - cognito-idp:InitiateAuth
+                        - cognito-idp:RespondToAuthChallenge
+                      Resource: !Sub arn:aws:cognito-idp:*:${AWS::AccountId}:userpool/*
+              - !Ref AWS::NoValue
+
+  # ===================================================================
+  # AWS Security Agent resources
+  # ===================================================================
+
+  # TargetDomain is a standalone resource (not nested under AgentSpace);
+  # it's linked to the space below via AgentSpace.TargetDomainIds.
+  CustomerTargetDomain:
+    Type: AWS::SecurityAgent::TargetDomain
+    Properties:
+      TargetDomainName: !Ref TargetDomainName
+      VerificationMethod: !Ref VerificationMethod
+      Tags:
+        - Key: Customer
+          Value: !Ref CustomerName
+
+  # AwsResources.IamRoles registers the three roles with the space; TargetDomainIds
+  # attaches the verified domain. Name is the only required property.
+  CustomerAgentSpace:
+    Type: AWS::SecurityAgent::AgentSpace
+    Properties:
+      Name: !Sub veriguard-${CustomerName}-space
+      Description: !Sub Veriguard agent space for customer ${CustomerName}, managed from account ${VeriguardManagementAccountId}
+      AwsResources:
+        IamRoles:
+          - !GetAtt ApplicationRole.Arn
+          - !GetAtt PentestServiceRole.Arn
+          - !GetAtt ActorRole.Arn
+      TargetDomainIds:
+        - !Ref CustomerTargetDomain
+      Tags:
+        - Key: Customer
+          Value: !Ref CustomerName
+
+  # Application has no Name/AgentSpaceId property in the real schema — it's the
+  # vehicle for granting WebApp users API access via RoleArn (the Application Role).
+  CustomerApplication:
+    Type: AWS::SecurityAgent::Application
+    Properties:
+      RoleArn: !GetAtt ApplicationRole.Arn
+      Tags:
+        - Key: Customer
+          Value: !Ref CustomerName
+
+  # Pentest requires AgentSpaceId, ServiceRole, and Assets. The Actor Role is
+  # attached per-actor inside Assets.Actors[].Authentication (ProviderType
+  # AWS_IAM_ROLE), not as a top-level property.
+  CustomerPentest:
+    Type: AWS::SecurityAgent::Pentest
+    Properties:
+      AgentSpaceId: !Ref CustomerAgentSpace
+      ServiceRole: !GetAtt PentestServiceRole.Arn
+      Title: !Sub Veriguard pentest — ${CustomerName}
+      Assets:
+        Endpoints:
+          - Uri: !Sub https://${TargetDomainName}
+        Actors:
+          - Identifier: primary-actor
+            Description: Authenticated test actor for the target application
+            Authentication:
+              ProviderType: AWS_IAM_ROLE
+              Value: !GetAtt ActorRole.Arn
+            Uris:
+              - !Sub https://${TargetDomainName}
+
+Outputs:
+  AgentSpaceId:
+    Value: !Ref CustomerAgentSpace
+  ApplicationId:
+    Value: !Ref CustomerApplication
+  TargetDomainId:
+    Value: !Ref CustomerTargetDomain
+  PentestId:
+    Value: !Ref CustomerPentest
+  ApplicationRoleArn:
+    Value: !GetAtt ApplicationRole.Arn
+  PentestServiceRoleArn:
+    Value: !GetAtt PentestServiceRole.Arn
+  ActorRoleArn:
+    Value: !GetAtt ActorRole.Arn
+  NextStep:
+    Description: Manual step CloudFormation cannot automate
+    Value: >
+      Open the AWS Security Agent console for this AgentSpace and retrieve the
+      domain-verification token (DNS TXT record or HTTP route path, from
+      CustomerTargetDomain's VerificationDetails). CFN does not expose this
+      token through a stack output. Publish it, wait for VerificationStatus to
+      flip to VERIFIED, then start CustomerPentest from the console or via
+      securityagent:StartPentestJob.

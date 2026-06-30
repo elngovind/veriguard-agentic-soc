@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Veriguard — Product Demo</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          navy: '#14213D',
+          navy2: '#1C2D52',
+          teal: '#0E7C86',
+          tealLight: '#BFE6E9',
+          tealTint: '#EAF6F7',
+          amber: '#F2A93B',
+          amberTint: '#FDF1DD',
+          bgLight: '#F7F9FB',
+          textDark: '#1F2937',
+          textMuted: '#64748B',
+          ice: '#CADCFC',
+          navyTint: '#EAEEF6',
+          danger: '#D64545',
+          dangerTint: '#FBEAEA',
+          success: '#1F9D6E',
+          successTint: '#E8F6F0',
+        },
+        fontFamily: { sans: ['Inter', 'Calibri', 'Arial', 'sans-serif'] },
+      },
+    },
+  };
+</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://unpkg.com/lucide@0.383.0/dist/umd/lucide.js"></script>
+<style>
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  .nav-item.active { background: rgba(255,255,255,0.08); border-left: 3px solid #F2A93B; }
+  .nav-item { border-left: 3px solid transparent; }
+  .badge { display:inline-flex; align-items:center; gap:4px; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:600; white-space:nowrap; }
+  .fade-in { animation: fadeIn .18s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform: translateY(4px);} to { opacity:1; transform: translateY(0);} }
+  table.dtable th { text-align:left; font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:#64748B; font-weight:600; padding:10px 14px; border-bottom:1px solid #E5E9F0; }
+  table.dtable td { padding:12px 14px; font-size:14px; border-bottom:1px solid #EEF1F5; vertical-align:middle; }
+  table.dtable tr:last-child td { border-bottom:none; }
+  .card { background:white; border-radius:14px; box-shadow: 0 1px 2px rgba(20,33,61,0.06), 0 1px 8px rgba(20,33,61,0.04); border:1px solid #EDF0F4; }
+  .icon-circle { display:flex; align-items:center; justify-content:center; border-radius:999px; flex-shrink:0; }
+  .clickable-row:hover { background:#F7FAFC; cursor:pointer; }
+  .modal-backdrop { background: rgba(20,33,61,0.45); }
+</style>
+</head>
+<body class="bg-bgLight text-textDark font-sans antialiased">
+<div id="app" class="flex h-screen overflow-hidden">
+
+  <!-- SIDEBAR -->
+  <aside class="w-64 bg-navy text-white flex flex-col shrink-0">
+    <div class="h-16 flex items-center gap-2 px-5 border-b border-white/10 shrink-0">
+      <div class="icon-circle bg-teal w-8 h-8"><i data-lucide="shield" class="w-4.5 h-4.5 text-white" style="width:18px;height:18px"></i></div>
+      <div>
+        <div class="font-bold text-[15px] leading-none tracking-tight">VERIGUARD</div>
+      </div>
+    </div>
+    <nav class="flex-1 overflow-y-auto py-4">
+      <div class="px-5 text-[11px] font-semibold uppercase tracking-wider text-white/40 mb-1">MSSP Console</div>
+      <a data-nav="overview" class="nav-item flex items-center gap-3 px-5 py-2.5 text-sm text-white/85 hover:text-white hover:bg-white/5 transition"><i data-lucide="layout-dashboard" style="width:16px;height:16px"></i>Overview</a>
+      <a data-nav="tenants" class="nav-item flex items-center gap-3 px-5 py-2.5 text-sm text-white/85 hover:text-white hover:bg-white/5 transition"><i data-lucide="building-2" style="width:16px;height:16px"></i>Tenants</a>
+      <a data-nav="sla" class="nav-item flex items-center gap-3 px-5 py-2.5 text-sm text-white/85 hover:text-white hover:bg-white/5 transition"><i data-lucide="gauge" style="width:16px;height:16px"></i>SLA &amp; Billing</a>
+
+      <div class="px-5 text-[11px] font-semibold uppercase tracking-wider text-white/40 mb-1 mt-6">Comply</div>
+      <a data-nav="mapping" class="nav-item flex items-center gap-3 px-5 py-2.5 text-sm text-white/85 hover:text-white hover:bg-white/5 transition"><i data-lucide="git-merge" style="width:16px;height:16px"></i>Control Mapping</a>
+      <a data-nav="evidence" class="nav-item flex items-center gap-3 px-5 py-2.5 text-sm text-white/85 hover:text-white hover:bg-white/5 transition"><i data-lucide="archive" style="width:16px;height:16px"></i>Evidence Packages</a>
+      <a data-nav="drift" class="nav-item flex items-center gap-3 px-5 py-2.5 text-sm text-white/85 hover:text-white hover:bg-white/5 transition"><i data-lucide="trending-down" style="width:16px;height:16px"></i>Posture Drift</a>
+    </nav>
+    <div class="px-5 py-4 border-t border-white/10 text-[11px] text-white/40 shrink-0">
+      Demo build · fictional data<br/>v1.0 · June 2026
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="flex-1 flex flex-col overflow-hidden">
+    <header class="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-7 shrink-0">
+      <div>
+        <h1 id="page-title" class="text-[17px] font-bold text-navy"></h1>
+        <p id="page-subtitle" class="text-[12px] text-textMuted"></p>
+      </div>
+      <div class="flex items-center gap-4">
+        <div class="relative">
+          <i data-lucide="search" class="absolute left-3 top-2.5 text-textMuted" style="width:14px;height:14px"></i>
+          <input type="text" placeholder="Search tenants, findings, controls…" class="pl-8 pr-3 py-2 text-sm rounded-lg border border-gray-200 bg-bgLight w-64 focus:outline-none focus:ring-2 focus:ring-teal/30" />
+        </div>
+        <div class="flex items-center gap-2 pl-4 border-l border-gray-200">
+          <div class="w-8 h-8 rounded-full bg-amber flex items-center justify-center text-navy font-bold text-xs">GV</div>
+          <div class="text-xs leading-tight">
+            <div class="font-semibold text-navy">Govind</div>
+            <div class="text-textMuted">MSSP Operator</div>
+          </div>
+        </div>
+      </div>
+    </header>
+    <main id="page-content" class="flex-1 overflow-y-auto p-7"></main>
+  </div>
+</div>
+
+<div id="modal-root"></div>
+
+<script>
+/* ========================= MOCK DATA ========================= */
+const TENANTS = [
+  { id:'t1', name:'Atlas Financial Group', industry:'Banking & Finance', accounts:14, frameworks:['SOC 2','PCI-DSS'], slaStatus:'breached', mode:'enforce', enforcePct:82, lastScan:'2026-06-29T14:22:00Z', findings:{critical:2,high:5,medium:11,low:9}, mrr:18400, plan:'Enterprise' },
+  { id:'t2', name:'Northwind Health Systems', industry:'Healthcare', accounts:9, frameworks:['HIPAA'], slaStatus:'on_track', mode:'learn', enforcePct:35, lastScan:'2026-06-30T02:10:00Z', findings:{critical:0,high:2,medium:6,low:14}, mrr:11200, plan:'Growth' },
+  { id:'t3', name:'Summit Retail Co', industry:'Retail', accounts:22, frameworks:['PCI-DSS'], slaStatus:'at_risk', mode:'enforce', enforcePct:64, lastScan:'2026-06-30T01:00:00Z', findings:{critical:1,high:4,medium:9,low:20}, mrr:24800, plan:'Enterprise' },
+  { id:'t4', name:'BlueOrbit SaaS', industry:'Technology', accounts:5, frameworks:['SOC 2'], slaStatus:'on_track', mode:'enforce', enforcePct:91, lastScan:'2026-06-30T05:45:00Z', findings:{critical:0,high:1,medium:3,low:7}, mrr:6400, plan:'Growth' },
+  { id:'t5', name:'Capitol Defense Systems', industry:'Government / Defense', accounts:31, frameworks:['FedRAMP','SOC 2'], slaStatus:'on_track', mode:'learn', enforcePct:12, lastScan:'2026-06-29T22:30:00Z', findings:{critical:1,high:3,medium:5,low:6}, mrr:41200, plan:'Enterprise' },
+  { id:'t6', name:'Meridian Logistics', industry:'Logistics', accounts:8, frameworks:['SOC 2'], slaStatus:'on_track', mode:'enforce', enforcePct:78, lastScan:'2026-06-30T03:15:00Z', findings:{critical:0,high:0,medium:4,low:11}, mrr:8900, plan:'Standard' },
+];
+
+const FINDINGS = [
+  { id:'f1', tenantId:'t1', type:'Pentest', title:'Unauthenticated S3 bucket allows public listing', severity:'critical', status:'open', service:'S3', discovered:'2026-06-27', control:'CC6.1' },
+  { id:'f2', tenantId:'t1', type:'Code Review', title:'Hardcoded IAM access key in Lambda deployment package', severity:'critical', status:'remediating', service:'Lambda', discovered:'2026-06-28', control:'CC6.6' },
+  { id:'f3', tenantId:'t1', type:'Design Review', title:'Cross-account trust policy missing external ID condition', severity:'high', status:'open', service:'IAM', discovered:'2026-06-25', control:'CC6.1' },
+  { id:'f4', tenantId:'t1', type:'Pentest', title:'API Gateway endpoint missing rate limiting', severity:'high', status:'open', service:'API Gateway', discovered:'2026-06-24', control:null },
+  { id:'f5', tenantId:'t2', type:'Code Review', title:'PHI field logged in plaintext to CloudWatch', severity:'high', status:'remediating', service:'Lambda', discovered:'2026-06-26', control:'164.312(e)(1)' },
+  { id:'f6', tenantId:'t2', type:'Design Review', title:'RDS instance not configured for encryption in transit', severity:'high', status:'open', service:'RDS', discovered:'2026-06-22', control:'164.312(e)(1)' },
+  { id:'f7', tenantId:'t2', type:'Pentest', title:'Session token does not expire on password reset', severity:'medium', status:'open', service:'Cognito', discovered:'2026-06-20', control:'164.312(a)(1)' },
+  { id:'f8', tenantId:'t3', type:'Pentest', title:'Card tokenization service accepts deprecated TLS 1.0', severity:'critical', status:'open', service:'API Gateway', discovered:'2026-06-29', control:'Req 6.2' },
+  { id:'f9', tenantId:'t3', type:'Code Review', title:'SQL injection in legacy order-lookup endpoint', severity:'high', status:'remediating', service:'EC2', discovered:'2026-06-27', control:'Req 6.5' },
+  { id:'f10', tenantId:'t3', type:'Design Review', title:'Cardholder data environment lacks network segmentation', severity:'high', status:'open', service:'VPC', discovered:'2026-06-21', control:'Req 6.5' },
+  { id:'f11', tenantId:'t3', type:'Pentest', title:'Admin console reachable without MFA enforcement', severity:'medium', status:'open', service:'IAM', discovered:'2026-06-18', control:'Req 8.3' },
+  { id:'f12', tenantId:'t4', type:'Code Review', title:'Dependency with known CVE in build pipeline', severity:'high', status:'remediating', service:'CodeBuild', discovered:'2026-06-28', control:'CC7.1' },
+  { id:'f13', tenantId:'t4', type:'Design Review', title:'Staging environment shares prod KMS key', severity:'medium', status:'open', service:'KMS', discovered:'2026-06-19', control:'CC6.6' },
+  { id:'f14', tenantId:'t5', type:'Pentest', title:'Default deny missing on inter-VPC boundary rule', severity:'critical', status:'remediating', service:'VPC', discovered:'2026-06-29', control:'SC-7' },
+  { id:'f15', tenantId:'t5', type:'Design Review', title:'Audit log retention below 1-year FedRAMP minimum', severity:'high', status:'open', service:'CloudTrail', discovered:'2026-06-23', control:'AC-2' },
+  { id:'f16', tenantId:'t5', type:'Code Review', title:'Privileged role assumable without session duration cap', severity:'high', status:'open', service:'IAM', discovered:'2026-06-20', control:'AC-2' },
+  { id:'f17', tenantId:'t6', type:'Pentest', title:'Outdated TLS cipher suite on internal load balancer', severity:'medium', status:'open', service:'ELB', discovered:'2026-06-26', control:'CC6.6' },
+  { id:'f18', tenantId:'t6', type:'Design Review', title:'Backup snapshots not encrypted with customer-managed key', severity:'medium', status:'remediating', service:'EBS', discovered:'2026-06-24', control:'CC6.6' },
+];
+
+const CONTROL_CATALOG = {
+  'SOC 2': [
+    { id:'CC6.1', desc:'Logical access controls restrict unauthorized access' },
+    { id:'CC6.6', desc:'Encryption protects data at rest and in transit' },
+    { id:'CC6.8', desc:'Controls prevent or detect malicious software' },
+    { id:'CC7.1', desc:'Detection of new vulnerabilities and security events' },
+    { id:'CC7.2', desc:'Continuous monitoring for anomalies and misconfigurations' },
+    { id:'CC8.1', desc:'Changes to infrastructure are authorized and tracked' },
+  ],
+  'PCI-DSS': [
+    { id:'Req 6.2', desc:'Systems and software are protected from known vulnerabilities via patching' },
+    { id:'Req 6.5', desc:'Public-facing applications are protected against common attacks' },
+    { id:'Req 8.3', desc:'Multi-factor authentication is enforced for all access into the CDE' },
+    { id:'Req 10.2', desc:'Audit logs capture all access to system components and cardholder data' },
+    { id:'Req 11.3', desc:'Penetration testing is performed periodically against the CDE' },
+  ],
+  'HIPAA': [
+    { id:'164.312(a)(1)', desc:'Access control — unique user identification and automatic logoff' },
+    { id:'164.312(c)(1)', desc:'Integrity — ePHI is protected from improper alteration or destruction' },
+    { id:'164.312(e)(1)', desc:'Transmission security — ePHI is protected during electronic transmission' },
+  ],
+  'FedRAMP': [
+    { id:'AC-2', desc:'Account management — accounts are provisioned, reviewed, and disabled per policy' },
+    { id:'SC-7', desc:'Boundary protection — network boundaries are monitored and controlled' },
+    { id:'SI-4', desc:'System monitoring — the system is monitored to detect attacks and unauthorized use' },
+    { id:'CM-3', desc:'Configuration change control — changes are reviewed and approved before deployment' },
+  ],
+};
+
+let EVIDENCE_PACKAGES = [
+  { id:'EP-1042', tenant:'t1', framework:'SOC 2', start:'2026-01-01', end:'2026-03-31', generated:'2026-04-03', findings:47, status:'Locked', size:'4.2 MB' },
+  { id:'EP-1041', tenant:'t3', framework:'PCI-DSS', start:'2026-01-01', end:'2026-03-31', generated:'2026-04-02', findings:61, status:'Locked', size:'5.8 MB' },
+  { id:'EP-1039', tenant:'t2', framework:'HIPAA', start:'2025-10-01', end:'2025-12-31', generated:'2026-01-05', findings:33, status:'Locked', size:'3.1 MB' },
+  { id:'EP-1036', tenant:'t5', framework:'FedRAMP', start:'2025-10-01', end:'2025-12-31', generated:'2026-01-04', findings:29, status:'Locked', size:'3.9 MB' },
+  { id:'EP-1031', tenant:'t4', framework:'SOC 2', start:'2025-07-01', end:'2025-09-30', generated:'2025-10-02', findings:22, status:'Locked', size:'2.4 MB' },
+  { id:'EP-1028', tenant:'t6', framework:'SOC 2', start:'2025-07-01', end:'2025-09-30', generated:'2025-10-01', findings:18, status:'Locked', size:'2.0 MB' },
+];
+
+const DRIFT_EVENTS = [
+  { id:'d1', tenantId:'t1', control:'CC6.1', framework:'SOC 2', satisfiedSince:'2026-03-12', driftDetected:'2026-06-27', finding:'Unauthenticated S3 bucket allows public listing', severity:'critical', status:'Open' },
+  { id:'d2', tenantId:'t3', control:'Req 6.2', framework:'PCI-DSS', satisfiedSince:'2026-02-20', driftDetected:'2026-06-29', finding:'Card tokenization service accepts deprecated TLS 1.0', severity:'critical', status:'Open' },
+  { id:'d3', tenantId:'t5', control:'SC-7', framework:'FedRAMP', satisfiedSince:'2026-01-15', driftDetected:'2026-06-29', finding:'Default deny missing on inter-VPC boundary rule', severity:'critical', status:'Acknowledged' },
+  { id:'d4', tenantId:'t2', control:'164.312(e)(1)', framework:'HIPAA', satisfiedSince:'2026-04-01', driftDetected:'2026-06-26', finding:'PHI field logged in plaintext to CloudWatch', severity:'high', status:'Open' },
+  { id:'d5', tenantId:'t4', control:'CC7.1', framework:'SOC 2', satisfiedSince:'2026-05-02', driftDetected:'2026-06-28', finding:'Dependency with known CVE in build pipeline', severity:'high', status:'Acknowledged' },
+];
+
+const SLA_TARGETS = [
+  { severity:'critical', detect:'4h', remediate:'24h' },
+  { severity:'high', detect:'8h', remediate:'72h' },
+  { severity:'medium', detect:'24h', remediate:'14d' },
+  { severity:'low', detect:'72h', remediate:'30d' },
+];
+
+const SLA_BREACHES = [
+  { tenantId:'t1', finding:'Unauthenticated S3 bucket allows public listing', severity:'critical', target:'24h remediate', actual:'41h elapsed', breachedBy:'17h' },
+  { tenantId:'t1', finding:'Hardcoded IAM access key in Lambda deployment package', severity:'critical', target:'4h detect', actual:'6h to detect', breachedBy:'2h' },
+  { tenantId:'t3', finding:'Card tokenization service accepts deprecated TLS 1.0', severity:'critical', target:'24h remediate', actual:'29h elapsed', breachedBy:'5h' },
+];
+
+const ACTIVITY_FEED = [
+  { time:'08:14', text:'Critical finding SLA breached for <b>Atlas Financial Group</b> — S3 bucket exposure unremediated 17h past target', type:'breach' },
+  { time:'06:02', text:'Evidence package <b>EP-1042</b> generated for <b>Atlas Financial Group</b> (SOC 2, Q1 2026)', type:'evidence' },
+  { time:'03:15', text:'Scan completed for <b>Meridian Logistics</b> — 0 critical, 0 high findings', type:'scan' },
+  { time:'02:10', text:'Scan completed for <b>Northwind Health Systems</b> — 2 new high findings detected', type:'scan' },
+  { time:'Yesterday', text:'Posture drift detected: <b>Summit Retail Co</b> — PCI-DSS Req 6.2 regressed to non-compliant', type:'drift' },
+  { time:'Yesterday', text:'Remediation auto-approved and moved to enforce mode for <b>BlueOrbit SaaS</b> (low-risk policy)', type:'remediation' },
+];
+
+/* ========================= STATE ========================= */
+const state = { page:'overview', tenantId:null, complyFramework:'SOC 2', complyTenant:'all', evidenceModalOpen:false };
+
+/* ========================= HELPERS ========================= */
+function fmtMoney(n){ return '$' + n.toLocaleString('en-US'); }
+function fmtDate(d){ return new Date(d).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }); }
+function fmtDateTime(d){ return new Date(d).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }); }
+function tenantById(id){ return TENANTS.find(t => t.id === id); }
+function findingsFor(tenantId){ return FINDINGS.filter(f => f.tenantId === tenantId); }
+
+function sevBadge(sev){
+  const map = {
+    critical: 'bg-dangerTint text-danger',
+    high: 'bg-amberTint text-[#B5740C]',
+    medium: 'bg-tealTint text-teal',
+    low: 'bg-navyTint text-textMuted',
+  };
+  return `<span class="badge ${map[sev]}">${sev[0].toUpperCase()+sev.slice(1)}</span>`;
+}
+function statusBadge(status){
+  const map = {
+    open: 'bg-dangerTint text-danger',
+    remediating: 'bg-amberTint text-[#B5740C]',
+    resolved: 'bg-successTint text-success',
+  };
+  const label = { open:'Open', remediating:'Remediating', resolved:'Resolved' }[status];
+  return `<span class="badge ${map[status]}">${label}</span>`;
+}
+function slaBadge(s){
+  const map = {
+    on_track: ['bg-successTint text-success', 'On Track'],
+    at_risk: ['bg-amberTint text-[#B5740C]', 'At Risk'],
+    breached: ['bg-dangerTint text-danger', 'Breached'],
+  };
+  return `<span class="badge ${map[s][0]}">${map[s][1]}</span>`;
+}
+function modeBadge(mode){
+  return mode === 'enforce'
+    ? `<span class="badge bg-teal/10 text-teal"><i data-lucide="zap" style="width:11px;height:11px"></i>Enforce</span>`
+    : `<span class="badge bg-navyTint text-navy"><i data-lucide="eye" style="width:11px;height:11px"></i>Learn</span>`;
+}
+function confBadge(c){
+  const map = { High:'bg-successTint text-success', Medium:'bg-amberTint text-[#B5740C]', Low:'bg-dangerTint text-danger' };
+  return `<span class="badge ${map[c]}">${c} confidence</span>`;
+}
+function reviewBadge(r){
+  return r === 'Confirmed'
+    ? `<span class="badge bg-successTint text-success"><i data-lucide="check" style="width:11px;height:11px"></i>Confirmed</span>`
+    : `<span class="badge bg-amberTint text-[#B5740C]"><i data-lucide="clock" style="width:11px;height:11px"></i>Pending review</span>`;
+}
+function severityCounts(t){
+  return [
+    {label:'Critical', n:t.findings.critical, cls:'text-danger'},
+    {label:'High', n:t.findings.high, cls:'text-[#B5740C]'},
+    {label:'Medium', n:t.findings.medium, cls:'text-teal'},
+    {label:'Low', n:t.findings.low, cls:'text-textMuted'},
+  ];
+}
+function kpiCard(icon, label, value, sub, accent){
+  const iconColor = accent === 'bg-amber' ? 'text-navy' : 'text-white';
+  return `
+  <div class="card p-5 flex items-start gap-4">
+    <div class="icon-circle w-11 h-11 ${accent}"><i data-lucide="${icon}" style="width:20px;height:20px" class="${iconColor}"></i></div>
+    <div>
+      <div class="text-2xl font-bold text-navy leading-tight">${value}</div>
+      <div class="text-[13px] text-textMuted mt-0.5">${label}</div>
+      ${sub ? `<div class="text-[12px] text-textMuted mt-1">${sub}</div>` : ''}
+    </div>
+  </div>`;
+}
+function sectionHeader(title, desc){
+  return `<div class="mb-5"><h2 class="text-[15px] font-bold text-navy">${title}</h2>${desc ? `<p class="text-[13px] text-textMuted mt-0.5">${desc}</p>` : ''}</div>`;
+}
+
+/* ========================= PAGE: OVERVIEW ========================= */
+function renderOverview(){
+  const totalCrit = TENANTS.reduce((a,t)=>a+t.findings.critical,0);
+  const totalHigh = TENANTS.reduce((a,t)=>a+t.findings.high,0);
+  const avgEnforce = Math.round(TENANTS.reduce((a,t)=>a+t.enforcePct,0)/TENANTS.length);
+  const mrr = TENANTS.reduce((a,t)=>a+t.mrr,0);
+  const slaCompliance = Math.round(100 * (TENANTS.length - TENANTS.filter(t=>t.slaStatus==='breached').length) / TENANTS.length);
+
+  return `
+  <div class="fade-in space-y-6">
+    <div class="grid grid-cols-4 gap-5">
+      ${kpiCard('building-2','Active tenants', TENANTS.length, `${TENANTS.reduce((a,t)=>a+t.accounts,0)} client AWS accounts under management`, 'bg-navy')}
+      ${kpiCard('alert-triangle','Open critical + high findings', totalCrit+totalHigh, `${totalCrit} critical · ${totalHigh} high`, 'bg-danger')}
+      ${kpiCard('gauge','SLA compliance', slaCompliance+'%', '1 tenant currently in breach', 'bg-teal')}
+      ${kpiCard('dollar-sign','MRR under management', fmtMoney(mrr), `Avg. enforce-mode coverage ${avgEnforce}%`, 'bg-amber')}
+    </div>
+
+    <div class="grid grid-cols-3 gap-5">
+      <div class="card p-5 col-span-2">
+        ${sectionHeader('Open findings by tenant', 'Severity breakdown across all client AWS Organizations')}
+        <div style="height:230px"><canvas id="chart-findings"></canvas></div>
+      </div>
+      <div class="card p-5">
+        ${sectionHeader('SLA compliance trend', 'Last 6 months, all tenants blended')}
+        <div style="height:230px"><canvas id="chart-sla"></canvas></div>
+      </div>
+    </div>
+
+    <div class="card p-5">
+      ${sectionHeader('Recent activity')}
+      <div class="space-y-3">
+        ${ACTIVITY_FEED.map(a => `
+          <div class="flex items-start gap-3 pb-3 border-b border-gray-100 last:border-0 last:pb-0">
+            <div class="icon-circle w-7 h-7 mt-0.5 ${activityColor(a.type)}"><i data-lucide="${activityIcon(a.type)}" style="width:13px;height:13px" class="${a.type==='drift' ? 'text-navy' : 'text-white'}"></i></div>
+            <div class="flex-1 text-[13px] text-textDark leading-snug">${a.text}</div>
+            <div class="text-[12px] text-textMuted shrink-0 pt-0.5">${a.time}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+function activityIcon(t){ return { breach:'alert-triangle', evidence:'archive', scan:'scan-line', drift:'trending-down', remediation:'zap' }[t]; }
+function activityColor(t){ return { breach:'bg-danger', evidence:'bg-teal', scan:'bg-navy2', drift:'bg-amber', remediation:'bg-success' }[t]; }
+
+function initOverviewCharts(){
+  const fctx = document.getElementById('chart-findings');
+  if (fctx) new Chart(fctx, {
+    type: 'bar',
+    data: {
+      labels: TENANTS.map(t => t.name.split(' ')[0]),
+      datasets: [
+        { label:'Critical', data: TENANTS.map(t=>t.findings.critical), backgroundColor:'#D64545' },
+        { label:'High', data: TENANTS.map(t=>t.findings.high), backgroundColor:'#F2A93B' },
+        { label:'Medium', data: TENANTS.map(t=>t.findings.medium), backgroundColor:'#0E7C86' },
+        { label:'Low', data: TENANTS.map(t=>t.findings.low), backgroundColor:'#CBD5E1' },
+      ],
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      scales: { x:{ stacked:true, grid:{display:false} }, y:{ stacked:true, grid:{color:'#F1F4F8'} } },
+      plugins: { legend: { position:'bottom', labels:{ boxWidth:10, font:{size:11} } } },
+    },
+  });
+  const sctx = document.getElementById('chart-sla');
+  if (sctx) new Chart(sctx, {
+    type: 'line',
+    data: {
+      labels: ['Jan','Feb','Mar','Apr','May','Jun'],
+      datasets: [{ label:'SLA compliance %', data:[91,93,95,97,98,83], borderColor:'#0E7C86', backgroundColor:'rgba(14,124,134,0.08)', fill:true, tension:0.35, pointRadius:3 }],
+    },
+    options: { responsive:true, maintainAspectRatio:false, scales:{ y:{ min:70, max:100, grid:{color:'#F1F4F8'} }, x:{ grid:{display:false} } }, plugins:{ legend:{display:false} } },
+  });
+}
+
+/* ========================= PAGE: TENANTS ========================= */
+function renderTenants(){
+  return `
+  <div class="fade-in">
+    <div class="card overflow-hidden">
+      <table class="dtable w-full">
+        <thead><tr>
+          <th>Tenant</th><th>Frameworks</th><th>Accounts</th><th>Findings</th><th>Remediation</th><th>SLA</th><th>Last scan</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${TENANTS.map(t => `
+            <tr class="clickable-row" data-open-tenant="${t.id}">
+              <td>
+                <div class="font-semibold text-navy">${t.name}</div>
+                <div class="text-[12px] text-textMuted">${t.industry}</div>
+              </td>
+              <td><div class="flex gap-1 flex-wrap">${t.frameworks.map(f=>`<span class="badge bg-navyTint text-navy">${f}</span>`).join('')}</div></td>
+              <td>${t.accounts}</td>
+              <td><div class="flex gap-3 text-[12px]">${severityCounts(t).filter(s=>s.n>0).map(s=>`<span class="${s.cls} font-semibold">${s.n}</span>`).join('') || '<span class="text-textMuted">None open</span>'}</div></td>
+              <td>${modeBadge(t.mode)} <span class="text-[12px] text-textMuted">${t.enforcePct}%</span></td>
+              <td>${slaBadge(t.slaStatus)}</td>
+              <td class="text-[12px] text-textMuted">${fmtDateTime(t.lastScan)}</td>
+              <td><i data-lucide="chevron-right" class="text-textMuted" style="width:16px;height:16px"></i></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function renderTenantDetail(id){
+  const t = tenantById(id);
+  const fs = findingsFor(id);
+  return `
+  <div class="fade-in space-y-5">
+    <button data-nav="tenants" class="flex items-center gap-1.5 text-[13px] text-teal font-medium hover:underline"><i data-lucide="arrow-left" style="width:14px;height:14px"></i>Back to tenants</button>
+
+    <div class="card p-6 flex items-start justify-between">
+      <div>
+        <h2 class="text-lg font-bold text-navy">${t.name}</h2>
+        <p class="text-[13px] text-textMuted">${t.industry} · ${t.plan} plan · ${t.accounts} client AWS accounts</p>
+        <div class="flex gap-2 mt-3">${t.frameworks.map(f=>`<span class="badge bg-navyTint text-navy">${f}</span>`).join('')} ${slaBadge(t.slaStatus)}</div>
+      </div>
+      <div class="text-right">
+        <div class="text-[12px] text-textMuted">Remediation governance</div>
+        <div class="mt-1">${modeBadge(t.mode)}</div>
+        <div class="text-[12px] text-textMuted mt-1">${t.enforcePct}% of approved fixes auto-enforced</div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-4 gap-4">
+      ${severityCounts(t).map(s=>`
+        <div class="card p-4 text-center">
+          <div class="text-2xl font-bold ${s.cls}">${s.n}</div>
+          <div class="text-[12px] text-textMuted mt-0.5">${s.label} findings</div>
+        </div>`).join('')}
+    </div>
+
+    <div class="card p-5">
+      ${sectionHeader('Findings', `Showing ${fs.length} recent of ${t.findings.critical+t.findings.high+t.findings.medium+t.findings.low} total open findings`)}
+      <table class="dtable w-full">
+        <thead><tr><th>Finding</th><th>Type</th><th>Service</th><th>Severity</th><th>Status</th><th>Control</th><th>Discovered</th></tr></thead>
+        <tbody>
+          ${fs.map(f=>`
+            <tr>
+              <td class="font-medium text-navy max-w-xs">${f.title}</td>
+              <td class="text-textMuted">${f.type}</td>
+              <td class="text-textMuted">${f.service}</td>
+              <td>${sevBadge(f.severity)}</td>
+              <td>${statusBadge(f.status)}</td>
+              <td>${f.control ? `<span class="badge bg-tealTint text-teal">${f.control}</span>` : '<span class="text-textMuted text-[12px]">Unmapped</span>'}</td>
+              <td class="text-textMuted text-[12px]">${fmtDate(f.discovered)}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+/* ========================= PAGE: SLA & BILLING ========================= */
+function renderSla(){
+  const totalMrr = TENANTS.reduce((a,t)=>a+t.mrr,0);
+  return `
+  <div class="fade-in space-y-6">
+    <div class="card p-5">
+      ${sectionHeader('SLA targets by severity', 'Contractual detect / remediate windows applied across all tenants')}
+      <table class="dtable w-full">
+        <thead><tr><th>Severity</th><th>Time to detect</th><th>Time to remediate</th></tr></thead>
+        <tbody>${SLA_TARGETS.map(s=>`<tr><td>${sevBadge(s.severity)}</td><td>${s.detect}</td><td>${s.remediate}</td></tr>`).join('')}</tbody>
+      </table>
+    </div>
+
+    <div class="card p-5 border-l-4 border-danger">
+      ${sectionHeader('Active SLA breaches', `${SLA_BREACHES.length} finding(s) currently past target`)}
+      <table class="dtable w-full">
+        <thead><tr><th>Tenant</th><th>Finding</th><th>Severity</th><th>Target</th><th>Actual</th><th>Breached by</th></tr></thead>
+        <tbody>
+          ${SLA_BREACHES.map(b=>`
+            <tr>
+              <td class="font-medium text-navy">${tenantById(b.tenantId).name}</td>
+              <td class="max-w-xs">${b.finding}</td>
+              <td>${sevBadge(b.severity)}</td>
+              <td class="text-textMuted">${b.target}</td>
+              <td class="text-textMuted">${b.actual}</td>
+              <td class="text-danger font-semibold">+${b.breachedBy}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card p-5">
+      ${sectionHeader('Usage & billing — June 2026', `Total MRR under management: ${fmtMoney(totalMrr)}`)}
+      <table class="dtable w-full">
+        <thead><tr><th>Tenant</th><th>Plan</th><th>Accounts</th><th>Scans this month</th><th>Base fee</th><th>Overage</th><th>Total due</th></tr></thead>
+        <tbody>
+          ${TENANTS.map(t=>{
+            const scans = t.accounts * 3 + Math.round(t.enforcePct/10);
+            const base = Math.round(t.mrr*0.85);
+            const overage = t.mrr - base;
+            return `<tr>
+              <td class="font-medium text-navy">${t.name}</td>
+              <td><span class="badge bg-navyTint text-navy">${t.plan}</span></td>
+              <td>${t.accounts}</td>
+              <td>${scans}</td>
+              <td class="text-textMuted">${fmtMoney(base)}</td>
+              <td class="text-textMuted">${fmtMoney(overage)}</td>
+              <td class="font-semibold text-navy">${fmtMoney(t.mrr)}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+/* ========================= PAGE: CONTROL MAPPING ========================= */
+function renderMapping(){
+  const frameworks = Object.keys(CONTROL_CATALOG);
+  const tenantsForFramework = TENANTS.filter(t => t.frameworks.includes(state.complyFramework));
+  const activeTenant = state.complyTenant === 'all' ? null : tenantById(state.complyTenant);
+  const relevantTenants = activeTenant ? [activeTenant] : tenantsForFramework;
+
+  const rows = [];
+  CONTROL_CATALOG[state.complyFramework].forEach((c, idx) => {
+    relevantTenants.forEach(t => {
+      const mapped = findingsFor(t.id).filter(f => f.control === c.id);
+      if (mapped.length === 0 && relevantTenants.length > 1) return;
+      const confidence = mapped.length === 0 ? 'High' : (idx % 3 === 0 ? 'Medium' : 'High');
+      const review = mapped.length > 0 && idx % 2 === 0 ? 'Pending Review' : 'Confirmed';
+      rows.push({ control:c, tenant:t, mapped, confidence, review });
+    });
+  });
+
+  return `
+  <div class="fade-in space-y-5">
+    <div class="card p-4 flex items-center gap-4">
+      <div class="text-[13px] font-medium text-textMuted">Framework</div>
+      <select id="sel-framework" class="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal/30">
+        ${frameworks.map(f=>`<option value="${f}" ${f===state.complyFramework?'selected':''}>${f}</option>`).join('')}
+      </select>
+      <div class="text-[13px] font-medium text-textMuted ml-4">Tenant</div>
+      <select id="sel-tenant" class="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal/30">
+        <option value="all" ${state.complyTenant==='all'?'selected':''}>All tenants on this framework</option>
+        ${tenantsForFramework.map(t=>`<option value="${t.id}" ${state.complyTenant===t.id?'selected':''}>${t.name}</option>`).join('')}
+      </select>
+    </div>
+
+    <div class="card p-5">
+      ${sectionHeader(`${state.complyFramework} control coverage`, `Bedrock-assisted mapping of findings to controls, with human reviewer sign-off`)}
+      <table class="dtable w-full">
+        <thead><tr><th>Control</th><th>Description</th><th>Tenant</th><th>Mapped findings</th><th>Confidence</th><th>Review status</th></tr></thead>
+        <tbody>
+          ${rows.map(r=>`
+            <tr>
+              <td><span class="badge bg-tealTint text-teal">${r.control.id}</span></td>
+              <td class="text-textMuted max-w-sm">${r.control.desc}</td>
+              <td class="font-medium text-navy">${r.tenant.name}</td>
+              <td>${r.mapped.length ? `<span class="font-semibold text-navy">${r.mapped.length}</span> finding${r.mapped.length>1?'s':''}` : '<span class="text-textMuted">Satisfied — none open</span>'}</td>
+              <td>${r.mapped.length ? confBadge(r.confidence) : '<span class="text-textMuted text-[12px]">—</span>'}</td>
+              <td>${r.mapped.length ? reviewBadge(r.review) : '<span class="text-textMuted text-[12px]">—</span>'}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+/* ========================= PAGE: EVIDENCE PACKAGES ========================= */
+function renderEvidence(){
+  return `
+  <div class="fade-in space-y-5">
+    <div class="flex items-center justify-between">
+      <p class="text-[13px] text-textMuted max-w-2xl">Evidence packages are immutable once generated — written once to S3 with Object Lock and unable to be altered or deleted by anyone, including Veriguard operators, until the retention period expires.</p>
+      <button id="btn-generate-evidence" class="bg-teal hover:bg-teal/90 text-white text-sm font-semibold px-4 py-2.5 rounded-lg flex items-center gap-2 shrink-0"><i data-lucide="plus" style="width:15px;height:15px"></i>Generate new package</button>
+    </div>
+    <div class="card overflow-hidden">
+      <table class="dtable w-full">
+        <thead><tr><th>Package</th><th>Tenant</th><th>Framework</th><th>Period</th><th>Generated</th><th>Findings</th><th>Size</th><th>Status</th><th></th></tr></thead>
+        <tbody id="evidence-tbody">
+          ${EVIDENCE_PACKAGES.map(p=>renderEvidenceRow(p)).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+function renderEvidenceRow(p){
+  const locked = p.status === 'Locked';
+  return `<tr id="row-${p.id}">
+    <td class="font-mono text-[13px] font-semibold text-navy">${p.id}</td>
+    <td class="font-medium text-navy">${tenantById(p.tenant).name}</td>
+    <td><span class="badge bg-navyTint text-navy">${p.framework}</span></td>
+    <td class="text-textMuted text-[12px]">${fmtDate(p.start)} – ${fmtDate(p.end)}</td>
+    <td class="text-textMuted text-[12px]">${fmtDate(p.generated)}</td>
+    <td>${p.findings}</td>
+    <td class="text-textMuted">${p.size}</td>
+    <td>${locked
+      ? `<span class="badge bg-successTint text-success"><i data-lucide="lock" style="width:11px;height:11px"></i>Locked</span>`
+      : `<span class="badge bg-amberTint text-[#B5740C]"><i data-lucide="loader" style="width:11px;height:11px"></i>Generating…</span>`}</td>
+    <td>${locked ? `<button class="text-teal text-[13px] font-medium hover:underline flex items-center gap-1"><i data-lucide="download" style="width:13px;height:13px"></i>Export</button>` : ''}</td>
+  </tr>`;
+}
+
+/* ========================= PAGE: POSTURE DRIFT ========================= */
+function renderDrift(){
+  return `
+  <div class="fade-in space-y-5">
+    <div class="card p-5">
+      ${sectionHeader('Posture drift', 'Controls that were previously satisfied and have since regressed due to a new or unresolved finding')}
+      <table class="dtable w-full">
+        <thead><tr><th>Tenant</th><th>Control</th><th>Compliant since</th><th>Drift detected</th><th>Triggering finding</th><th>Severity</th><th>Status</th></tr></thead>
+        <tbody>
+          ${DRIFT_EVENTS.map(d=>`
+            <tr>
+              <td class="font-medium text-navy">${tenantById(d.tenantId).name}</td>
+              <td><span class="badge bg-tealTint text-teal">${d.control}</span> <span class="text-[11px] text-textMuted">${d.framework}</span></td>
+              <td class="text-textMuted text-[12px]">${fmtDate(d.satisfiedSince)}</td>
+              <td class="text-textMuted text-[12px]">${fmtDate(d.driftDetected)}</td>
+              <td class="max-w-xs">${d.finding}</td>
+              <td>${sevBadge(d.severity)}</td>
+              <td>${d.status === 'Open' ? '<span class="badge bg-dangerTint text-danger">Open</span>' : '<span class="badge bg-successTint text-success">Acknowledged</span>'}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+/* ========================= EVIDENCE MODAL ========================= */
+function openEvidenceModal(){
+  const frameworks = Object.keys(CONTROL_CATALOG);
+  document.getElementById('modal-root').innerHTML = `
+    <div id="modal-backdrop" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50 fade-in">
+      <div class="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl">
+        <h3 class="text-[16px] font-bold text-navy mb-1">Generate evidence package</h3>
+        <p class="text-[13px] text-textMuted mb-5">Findings, control mappings, and remediation proof will be packaged and written once to S3 with Object Lock.</p>
+        <div class="space-y-3">
+          <div>
+            <label class="text-[12px] font-semibold text-textMuted">Tenant</label>
+            <select id="modal-tenant" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mt-1">${TENANTS.map(t=>`<option value="${t.id}">${t.name}</option>`).join('')}</select>
+          </div>
+          <div>
+            <label class="text-[12px] font-semibold text-textMuted">Framework</label>
+            <select id="modal-framework" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mt-1">${frameworks.map(f=>`<option value="${f}">${f}</option>`).join('')}</select>
+          </div>
+          <div>
+            <label class="text-[12px] font-semibold text-textMuted">Period</label>
+            <div class="flex gap-2 mt-1">
+              <input type="date" id="modal-start" value="2026-04-01" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+              <input type="date" id="modal-end" value="2026-06-30" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+            </div>
+          </div>
+        </div>
+        <div class="flex gap-3 mt-6">
+          <button id="modal-cancel" class="flex-1 border border-gray-200 rounded-lg py-2.5 text-sm font-semibold text-textMuted hover:bg-gray-50">Cancel</button>
+          <button id="modal-confirm" class="flex-1 bg-teal text-white rounded-lg py-2.5 text-sm font-semibold hover:bg-teal/90">Generate</button>
+        </div>
+      </div>
+    </div>`;
+  document.getElementById('modal-cancel').onclick = closeModal;
+  document.getElementById('modal-backdrop').addEventListener('click', e => { if (e.target.id === 'modal-backdrop') closeModal(); });
+  document.getElementById('modal-confirm').onclick = () => {
+    const tenant = document.getElementById('modal-tenant').value;
+    const framework = document.getElementById('modal-framework').value;
+    const start = document.getElementById('modal-start').value;
+    const end = document.getElementById('modal-end').value;
+    const id = 'EP-' + (1043 + EVIDENCE_PACKAGES.length);
+    const pkg = { id, tenant, framework, start, end, generated:'2026-06-30', findings: Math.floor(Math.random()*30)+10, status:'Generating', size:'—' };
+    EVIDENCE_PACKAGES.unshift(pkg);
+    closeModal();
+    render();
+    setTimeout(() => {
+      pkg.status = 'Locked';
+      pkg.size = (Math.random()*4+1).toFixed(1) + ' MB';
+      const row = document.getElementById('row-' + id);
+      if (row) row.outerHTML = renderEvidenceRow(pkg);
+      lucide.createIcons();
+    }, 2200);
+  };
+}
+function closeModal(){ document.getElementById('modal-root').innerHTML = ''; }
+
+/* ========================= ROUTING / RENDER ========================= */
+const PAGE_META = {
+  overview: ['Overview', 'Cross-tenant security posture at a glance'],
+  tenants: ['Tenants', 'Client AWS Organizations onboarded to Veriguard'],
+  sla: ['SLA & Billing', 'Contractual targets, breaches, and usage-based billing'],
+  mapping: ['Control Mapping', 'Findings mapped to compliance framework controls'],
+  evidence: ['Evidence Packages', 'Immutable, audit-ready exports for auditors'],
+  drift: ['Posture Drift', 'Controls that have regressed since last satisfied'],
+  tenantDetail: ['Tenant detail', ''],
+};
+
+function render(){
+  const content = document.getElementById('page-content');
+  let meta = PAGE_META[state.page];
+  if (state.page === 'tenantDetail') {
+    const t = tenantById(state.tenantId);
+    meta = ['Tenant detail', t ? t.name : ''];
+    content.innerHTML = renderTenantDetail(state.tenantId);
+  } else {
+    const renderers = { overview:renderOverview, tenants:renderTenants, sla:renderSla, mapping:renderMapping, evidence:renderEvidence, drift:renderDrift };
+    content.innerHTML = renderers[state.page]();
+  }
+  document.getElementById('page-title').textContent = meta[0];
+  document.getElementById('page-subtitle').textContent = meta[1];
+
+  document.querySelectorAll('.nav-item').forEach(el => {
+    const navKey = el.getAttribute('data-nav');
+    const isActive = navKey === state.page || (state.page === 'tenantDetail' && navKey === 'tenants');
+    el.classList.toggle('active', isActive);
+  });
+
+  if (window.lucide) lucide.createIcons();
+  if (state.page === 'overview') initOverviewCharts();
+  wirePageEvents();
+}
+
+function wirePageEvents(){
+  document.querySelectorAll('[data-open-tenant]').forEach(el => {
+    el.addEventListener('click', () => { state.page = 'tenantDetail'; state.tenantId = el.getAttribute('data-open-tenant'); render(); });
+  });
+  const fSel = document.getElementById('sel-framework');
+  if (fSel) fSel.addEventListener('change', e => { state.complyFramework = e.target.value; state.complyTenant = 'all'; render(); });
+  const tSel = document.getElementById('sel-tenant');
+  if (tSel) tSel.addEventListener('change', e => { state.complyTenant = e.target.value; render(); });
+  const genBtn = document.getElementById('btn-generate-evidence');
+  if (genBtn) genBtn.addEventListener('click', openEvidenceModal);
+}
+
+document.querySelectorAll('[data-nav]').forEach(el => {
+  el.addEventListener('click', () => { state.page = el.getAttribute('data-nav'); state.tenantId = null; render(); });
+});
+
+render();
+</script>
+</body>
+</html>
