@@ -211,7 +211,7 @@ Resources:
     Properties:
       AgentSpaceId: !Ref CustomerAgentSpace
       ServiceRole: !GetAtt PentestServiceRole.Arn
-      Title: !Sub Veriguard pentest — ${CustomerName}
+      Title: !Sub Veriguard-pentest-${CustomerName}
       Assets:
         Endpoints:
           - Uri: !Sub https://${TargetDomainName}
